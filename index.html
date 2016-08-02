@@ -206,6 +206,127 @@
             
               
                 
+                <a class="post-title-link" href="/2016/08/02/记一次数据库迁移/" itemprop="url">
+                  记一次数据库迁移
+                </a>
+              
+            
+          </h1>
+        
+
+        <div class="post-meta">
+          <span class="post-time">
+            <span class="post-meta-item-icon">
+              <i class="fa fa-calendar-o"></i>
+            </span>
+            <span class="post-meta-item-text">发表于</span>
+            <time itemprop="dateCreated" datetime="2016-08-02T10:03:41+08:00" content="2016-08-02">
+              2016-08-02
+            </time>
+          </span>
+
+          
+
+          
+            
+          
+
+          
+
+          
+          
+
+        </div>
+      </header>
+    
+
+
+    <div class="post-body" itemprop="articleBody">
+
+      
+      
+
+      
+        
+          
+            <p>网站有一段时间速度及其不稳定，个人认为是由于原来的哪个服务器有很多小组在用，可能有的时候运行资源比较少。冰神之前将solr迁移到了系的服务器上，这次我准备将数据库也迁过去。主要记录一下工程实践中遇到的一系列概念，可能给出相关链接，或者直接走关键字即可。</p>
+<p>数据库迁移不是一件很难的事情，只是才开始我不大懂，自己直接谷歌，看到一些博客写的很复杂，后来了解到一般大业务的数据库迁移对于主从节点、数据库的运行状态都要有所考虑，而我们这个访问量不大，不用管这些。。。<a href="https://dbarobin.com/2015/09/15/migration-of-mysql-on-different-scenes/" target="_blank" rel="external">不同场景下 MySQL 的迁移方案</a>这里讲的比较全，也比较复杂。</p>
+<p>一般的，直接用mysqldump指令就可以了<a href="https://segmentfault.com/a/1190000002432631" target="_blank" rel="external">mysqldump - 给 DBA 的 25 个小技巧</a>，内容简单暴力，直接模仿代码。mysqldump不需要进入mysql，直接在终端执行即可。<br>不过mysqldump的速度很成问题。尤其是现在基本都是大数据，动辄几亿条数据。我们使用</p>
+<blockquote>
+<p>mysqldump –help</p>
+</blockquote>
+<p>可以看到有很多选项。关于dump速度的有提到指定</p>
+<blockquote>
+<p>–max_allowed_packet、–net_buffer_length</p>
+</blockquote>
+<p>这两个参数会有比较好的效果，不然几百万条数据都吃力。<br>最终我的mysqldump的命令行是</p>
+<blockquote>
+<p>mysqldump -u acemap -p –databases mag-new-160205 -e –max_allowed_packet=734003200 –net_buffer_length=16384 | pigz -9 -p 32 &gt; mag-new-160205.sql.gz</p>
+</blockquote>
+<p>不过mysqldump毕竟是单线程的产物，而且会<strong>锁表</strong>，现在大数据库的迁移都建议使用<strong>XtraBackup</strong>工具，这是<strong>Percona</strong>公司的产品，他家搞了很多mysql工具。<a href="https://www.percona.com/software/mysql-database" target="_blank" rel="external">MySQL Database Software</a>。关于<strong>XtraBackup</strong>更详细的介绍请看<a href="http://xiaorui.cc/2015/07/15/tb%E9%87%8F%E7%BA%A7mysql%E6%95%B0%E6%8D%AE%E7%9A%84xtrabackup%E5%8E%8B%E7%BC%A9%E8%BF%81%E7%A7%BB%E6%96%B9%E6%A1%88/" target="_blank" rel="external">TB级mysql数据之xtrabackup压缩备份迁移方案</a>写的很棒。</p>
+<p>可是我在安装的时候遇到了问题。大概就是下载了二进制安装文件，连锁的遇到live.so6库(大概叫这个？)、rpm、yum、locale设置等一系列问题，因此没有安装成功。。。下次考虑换一种安装方式</p>
+<p>另一个是dump之后的压缩问题。可以看到我的命令行里面有</p>
+<blockquote>
+<p>pigz -9 -p 32</p>
+</blockquote>
+<p>表示采用<strong>pigz</strong>压缩。这是一个多线程压缩，而常用的gzip是单线程。pigz的安装也很简单。下载编译包然后make一下，出错了。。。<br>折腾了好久是需要在编译路径末尾添上</p>
+<blockquote>
+<p>-lz</p>
+</blockquote>
+<p>然后</p>
+<blockquote>
+<p>apt-get install pigz</p>
+</blockquote>
+<p>就可以全局使用了。</p>
+<p>dump之后就是需要传输，众所周知，使用<strong>scp</strong>是最为普遍的做法，很简单。看到两个关于scp的神文，以前也没有深入了解过，很有意思<a href="http://www.orczhou.com/index.php/2013/11/make-scp-faster-with-cipher-and-compression/" target="_blank" rel="external">加速scp传输速度</a>和<a href="http://www.orczhou.com/index.php/2013/11/tranfer-data-faster-on-the-fly/" target="_blank" rel="external">使用tar+lz4/pigz+ssh更快的数据传输</a>。<strong>无论何时，我们都需要考虑提高工程中各个部分的效率</strong></p>
+<p>之后就是在新的服务器上面解压缩，进入mysql，使用source指令，直接就可以重建新的数据库。</p>
+<p>对于有的数据库只需要其中的一部分table时，我的做法是先dump出其数据库结构，然后dump出需要的表，在mysql里面source导入空数据库，在进入该数据库，导入表。</p>
+<p>最后。。换了新服务器，反而变慢了。。。tffb时间很长。。先研究研究这个吧<a href="http://stackoverflow.com/questions/28580845/how-can-i-reduce-the-waiting-ttfb-time" target="_blank" rel="external">How can I reduce the waiting (ttfb) time</a>T_T</p>
+
+          
+        
+      
+    </div>
+
+    <div>
+      
+    </div>
+
+    <footer class="post-footer">
+      
+
+      
+
+      
+      
+        <div class="post-eof"></div>
+      
+    </footer>
+  </article>
+
+
+    
+      
+
+  
+  
+
+  
+  
+  
+
+  <article class="post post-type-normal " itemscope itemtype="http://schema.org/Article">
+
+    
+      <header class="post-header">
+
+        
+        
+          <h1 class="post-title" itemprop="name headline">
+            
+            
+              
+                
                 <a class="post-title-link" href="/2016/04/04/First Step/" itemprop="url">
                   My New Post
                 </a>
@@ -318,7 +439,7 @@
         <nav class="site-state motion-element">
           <div class="site-state-item site-state-posts">
             <a href="/archives">
-              <span class="site-state-item-count">1</span>
+              <span class="site-state-item-count">2</span>
               <span class="site-state-item-name">日志</span>
             </a>
           </div>
